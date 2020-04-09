@@ -20,8 +20,20 @@ Public Class Mapa
             'e modelspace em escrita
             Dim model As BlockTableRecord = bt(BlockTableRecord.ModelSpace).GetObject(OpenMode.ForWrite)
 
+            Dim dt As systemData.DataTable = LerCSV("C:\Users\raina\Desktop\1f2e9efc2bdd487d4f3b693467aeb925_Download_COVID19_20200406.csv", ";")
 
-            Dim dt As systemData.DataTable = LerCSV("C:\Users\raina\Desktop\1f2e9efc2bdd487d4f3b693467aeb925_Download_COVID19_20200406.csv")
+            MsgBox("L: " & dt.Rows.Count & "C: " & dt.Columns.Count)
+
+            For Each item As systemData.DataColumn In dt.Columns
+                MsgBox(item.ColumnName)
+
+            Next
+
+            For Each item As String In dt.Rows(1).ItemArray
+                MsgBox(item)
+
+            Next
+
 
             'coleção para os objectos do layer
             Dim ents As New ObjectIdCollection
@@ -40,22 +52,6 @@ Public Class Mapa
                 Dim objeto As DBObject = tr.GetObject(estado, OpenMode.ForWrite)
 
                 If objeto.GetRXClass.DxfName = "LWPOLYLINE" Then
-
-                    ''para criar as hachuras do estados
-                    'Dim hatchE As New Hatch
-                    'Dim dbObjids As New ObjectIdCollection()
-                    'dbObjids.Add(estado)
-                    'model.AppendEntity(hatchE)
-                    'tr.AddNewlyCreatedDBObject(hatchE, True)
-                    'With hatchE
-                    '    .SetHatchPattern(HatchPatternType.PreDefined, "SOLID")
-                    '    .Associative = True
-                    '    .AppendLoop(HatchLoopTypes.External, dbObjids)
-                    '    .EvaluateHatch(True)
-                    '    .Layer = pr.StringResult
-                    'End With
-
-
 
                     tr.Commit()
                 End If
@@ -92,51 +88,36 @@ Public Class Mapa
 
     End Sub
 
-    Function LerCSV(ByVal path As String) As System.Data.DataTable
+    ''' <summary>
+    ''' Função que converte um arquivo de texto com delimitador, a primeira linha deve conter o título das colunas.
+    ''' </summary>
+    Public Function LerCSV(ByVal strFilePath As String, delimitador As String) As System.Data.DataTable
 
-        Try
+        'abre o arquivo
+        Dim sr As StreamReader = New StreamReader(strFilePath)
+        'pega a primeira linha como cabeçalho
 
-            Dim sr As New StreamReader(path)
-            Dim fullFileStr As String = sr.ReadToEnd()
-            sr.Close()
-            sr.Dispose()
+        Dim headers As String() = sr.ReadLine().Split(delimitador)
+        Dim dt As systemData.DataTable = New systemData.DataTable()
 
-            Dim lines As String() = fullFileStr.Split(ControlChars.Lf)
-            Dim dt As New systemData.DataTable()
-            Dim sArr As String() = lines(0).Split(";"c)
+        'cria as colunas conforme primeira linha 
+        For Each header As String In headers
+            dt.Columns.Add(header)
+        Next
 
+        'le o restante até o final
+        While Not sr.EndOfStream
+            Dim rows As String() = sr.ReadLine().Split(delimitador)
+            Dim dr As DataRow = dt.NewRow()
 
-            For Each s As String In sArr
-                dt.Columns.Add(New systemData.DataColumn())
-            Next
-            Dim row As DataRow
-            Dim finalLine As String = ""
-
-            For Each line As String In lines
-                row = dt.NewRow()
-                finalLine = line.Replace(Convert.ToString(ControlChars.Cr), "")
-                row.ItemArray = finalLine.Split(";"c)
-                dt.Rows.Add(row)
-            Next
-
-            MsgBox(sArr.Count)
-            Dim count As Integer = 0
-            For Each titulo As String In sArr
-                MsgBox(titulo)
-                dt.Columns(count).ColumnName = titulo
-                count += 1
-
+            For i As Integer = 0 To headers.Length - 1
+                dr(i) = rows(i)
             Next
 
-            For Each colunas As systemData.DataColumn In dt.Columns
-                MsgBox("nome col: " & colunas.ColumnName)
-            Next
+            dt.Rows.Add(dr)
+        End While
 
-            Return dt
-        Catch ex As Exception
-
-            Throw ex
-        End Try
+        Return dt
 
     End Function
 End Class
