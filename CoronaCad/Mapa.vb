@@ -1,7 +1,9 @@
 ﻿Imports System.IO
+
 Imports Autodesk.AutoCAD.ApplicationServices
 Imports Autodesk.AutoCAD.DatabaseServices
 Imports Autodesk.AutoCAD.EditorInput
+Imports Autodesk.AutoCAD.Geometry
 Imports Autodesk.AutoCAD.Runtime
 Imports acApp = Autodesk.AutoCAD.ApplicationServices.Application
 
@@ -20,46 +22,84 @@ Public Class Mapa
             'e modelspace em escrita
             Dim model As BlockTableRecord = bt(BlockTableRecord.ModelSpace).GetObject(OpenMode.ForWrite)
 
-            Dim dt As systemData.DataTable = LerCSV("C:\Users\raina\Desktop\1f2e9efc2bdd487d4f3b693467aeb925_Download_COVID19_20200406.csv", ";")
-
-            MsgBox("L: " & dt.Rows.Count & "C: " & dt.Columns.Count)
-
-            For Each item As systemData.DataColumn In dt.Columns
-                MsgBox(item.ColumnName)
-
-            Next
-
-            For Each item As String In dt.Rows(1).ItemArray
-                MsgBox(item)
-
-            Next
-
-
-            'coleção para os objectos do layer
-            Dim ents As New ObjectIdCollection
-
-            'pede o nome do layer
-            Dim pr As PromptResult = ed.GetString(vbLf & "Nome do layer: ")
-
-            If pr.Status = PromptStatus.OK Then
-                ents = ObjetosLayer(pr.StringResult)
+            'abrir aquivo
+            Dim openFileDialog1 As OpenFileDialog = New OpenFileDialog()
+            Dim caminho As String
+            If openFileDialog1.ShowDialog() = DialogResult.OK Then
+                caminho = openFileDialog1.FileName
             Else
                 Exit Sub
             End If
 
-            For Each estado As ObjectId In ents
+            'datatable com os dados
+            Dim dt As systemData.DataTable = LerCSV(caminho, ";")
 
-                Dim objeto As DBObject = tr.GetObject(estado, OpenMode.ForWrite)
+            Dim PR As Estado = New Estado("PR")
 
-                If objeto.GetRXClass.DxfName = "LWPOLYLINE" Then
+            Dim data As String = "43927"
 
-                    tr.Commit()
-                End If
-
-            Next
+            'CriarGrafico(dt, "PR", dt.Columns(0), dt.Columns(1))
+            'tr.Commit()
         End Using
 
     End Sub
+    Private Class Estado
+
+        'estado	data	casosNovos	casosAcumulados	obitosNovos	obitosAcumulados
+        Dim _nome As String
+        Dim _data As Date
+        Dim _casosNovos As Integer
+        Dim _casosAcumulados As Integer
+        Dim _obitosNovos As Integer
+        Dim _obitosAcumulados As Integer
+        Public Sub New(ByVal abreviacao As String)
+            _nome = abreviacao
+        End Sub
+
+        Public Function GetCasosNovos(data As Integer, dt As systemData.DataTable)
+            Return LocalizaValor("casosNovos", _nome, data, dt)
+        End Function
+        Public Function GetCasosAcumulados(data As Integer, dt As systemData.DataTable)
+            Return LocalizaValor("casosAcumulados", _nome, data, dt)
+        End Function
+        Public Function GetObitosNovos(data As Integer, dt As systemData.DataTable)
+            Return LocalizaValor("obitosNovos", _nome, data, dt)
+        End Function
+        Public Function GetObitosAcumulados(data As Integer, dt As systemData.DataTable)
+            Return LocalizaValor("obitosAcumulados", _nome, data, dt)
+        End Function
+
+        Private Function LocalizaValor(nomeColuna As String, estado As String, data As String, dt As systemData.DataTable)
+
+            ' filtro coluna "data" = a data informada
+            Dim filtro As String = "data" & "=" & data
+
+            ' localiza as linhas com o parametro do  filtro
+            Dim drc As DataRow() = dt.Select(filtro)
+
+            'index da coluna procurada
+            Dim indexColunaProcurada As Integer = dt.Columns(nomeColuna).Ordinal
+            'percorre todoas as linhas encontradas
+            For Each linha As systemData.DataRow In drc
+                'pegar apenas o estado selecionado
+                If linha.Item(1).ToString = estado Then
+                    Return linha(indexColunaProcurada)
+                End If
+            Next
+
+        End Function
+        Property Nome As String
+            Get
+                Return _nome
+            End Get
+
+            Set(ByVal Value As String)
+                _nome = Value
+            End Set
+        End Property
+
+    End Class
+
     ''' <summary>
     ''' Função que retorna todos os objectId do layer
     ''' </summary>
@@ -84,10 +124,46 @@ Public Class Mapa
         End Using
 
     End Function
+    Private Sub CriarGrafico(dt As systemData.DataTable, estado As String, colunaX As systemData.DataColumn, colunaY As systemData.DataColumn)
+
+        Dim doc As Document = acApp.DocumentManager.MdiActiveDocument
+        Dim db As Database = doc.Database
+        Dim ed = doc.Editor
+
+        Using tr = doc.TransactionManager.StartTransaction
+            'tabela de bloco em escrita
+            Dim bt As BlockTable = db.BlockTableId.GetObject(OpenMode.ForWrite)
+            'e modelspace em escrita
+            Dim model As BlockTableRecord = bt(BlockTableRecord.ModelSpace).GetObject(OpenMode.ForWrite)
+
+            'cria e adiciona a polilinha
+            Dim linha As New Polyline With {.Layer = estado}
+            model.AppendEntity(linha)
+            tr.AddNewlyCreatedDBObject(linha, True)
+
+            'adiciona novo ponto
+            For Each dtLinha As DataRow In dt.Rows
+
+                linha.AddVertexAt(linha.NumberOfVertices, New Point2d(dtLinha.ItemArray(0), dtLinha.ItemArray(1)), 0, 0, 0)
+                PausaAtualiza(500)
+            Next
+            tr.Commit()
+        End Using
+
+    End Sub
     Private Sub MudarCorObjeto(corNome As String, tipoObjeto As Type)
 
     End Sub
+    Private Sub PausaAtualiza(tempo As Integer)
+        Dim doc As Document = acApp.DocumentManager.MdiActiveDocument
+        Dim db As Database = doc.Database
+        Dim ed = doc.Editor
 
+        doc.TransactionManager.QueueForGraphicsFlush()
+        doc.TransactionManager.FlushGraphics()
+        ed.UpdateScreen()
+        System.Threading.Thread.Sleep(tempo)
+    End Sub
     ''' <summary>
     ''' Função que converte um arquivo de texto com delimitador, a primeira linha deve conter o título das colunas.
     ''' </summary>
