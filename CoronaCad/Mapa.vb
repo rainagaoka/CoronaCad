@@ -1,5 +1,6 @@
-﻿Imports System.IO
-
+﻿Imports System.Globalization
+Imports System.IO
+Imports System.Reflection
 Imports Autodesk.AutoCAD.ApplicationServices
 Imports Autodesk.AutoCAD.DatabaseServices
 Imports Autodesk.AutoCAD.EditorInput
@@ -31,15 +32,72 @@ Public Class Mapa
                 Exit Sub
             End If
 
-            'datatable com os dados
+            ' adicionar leitura direta do servidor
+            'datatable com os dados ,
+
             Dim dt As systemData.DataTable = LerCSV(caminho, ";")
 
-            Dim PR As Estado = New Estado("PR")
+            'o nome das colunas foram alterados ao longo das publicações
+            'padrão em portugues
+            'regiao  Estado	data	casosNovos	casosAcumulados	obitosNovos	obitosAcumulados
 
-            Dim data As String = "43927"
+            dt.Columns(0).ColumnName = "regiao"
+            dt.Columns(1).ColumnName = "Estado"
+            dt.Columns(2).ColumnName = "data"
+            dt.Columns(3).ColumnName = "casosNovos"
+            dt.Columns(4).ColumnName = "casosAcumulados"
+            dt.Columns(5).ColumnName = "obitosNovos"
+            dt.Columns(6).ColumnName = "obitosAcumulados"
 
-            'CriarGrafico(dt, "PR", dt.Columns(0), dt.Columns(1))
-            'tr.Commit()
+            Dim nomeEstados() As String = {"AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"}
+
+            Dim estadosCol As New Collection
+            For Each nomeEstado As String In nomeEstados
+                estadosCol.Add(New Estado(nomeEstado), nomeEstado)
+            Next
+
+            'criar polilinhas dos estados
+            Dim polyColl As New Collection
+            For Each estado As Estado In estadosCol
+                Dim polyEstado As New Polyline With {.Layer = estado.Nome}
+                polyEstado.AddVertexAt(polyEstado.NumberOfVertices, New Point2d(0, 0), 0, 0, 0)
+                polyColl.Add(polyEstado, estado.Nome)
+
+                model.AppendEntity(polyEstado)
+                tr.AddNewlyCreatedDBObject(polyEstado, True)
+
+            Next
+
+            Dim diaInicial As Integer = dt.Compute("Min(data)", "") '43860 primeiro dia do banco de dados
+            Dim diaFinal As Integer = dt.Compute("Max(data)", "") '43927 ultimo dia do banco de dados
+            Dim distorcaoX As Double = 220 ' escala do grafico
+
+            'texto com a data atual
+            Dim textoData As New DBText With
+                {.Height = 500,
+                .Position = New Point3d(7252, 11000, 1)}
+            textoData.SetDatabaseDefaults(db)
+
+            model.AppendEntity(textoData)
+            tr.AddNewlyCreatedDBObject(textoData, True)
+
+            'adiciona novo ponto
+            For i = diaInicial To diaFinal Step 1 'frequencia de dias
+
+                'mudando data do texto conforme data atual
+                'conveter de dias corridos para dd/MM/aa
+
+                Dim dataAtual As DateTime = DateTime.FromOADate(i)
+                textoData.TextString = dataAtual.Date
+
+                For Each estado As String In nomeEstados
+                    Dim polyEstado As Polyline = polyColl(estado)
+                    polyEstado.AddVertexAt(polyEstado.NumberOfVertices, New Point2d((i - diaInicial) * distorcaoX, estadosCol(estado).LocalizaValor("casosAcumulados", polyEstado.Layer, i, dt)), 0, 0, 0)
+                Next
+                PausaAtualiza(100)
+            Next
+
+            tr.Commit()
         End Using
 
     End Sub
@@ -47,11 +105,11 @@ Public Class Mapa
 
         'estado	data	casosNovos	casosAcumulados	obitosNovos	obitosAcumulados
         Dim _nome As String
-        Dim _data As Date
-        Dim _casosNovos As Integer
-        Dim _casosAcumulados As Integer
-        Dim _obitosNovos As Integer
-        Dim _obitosAcumulados As Integer
+        'Dim _data As Date
+        'Dim _casosNovos As Integer
+        'Dim _casosAcumulados As Integer
+        'Dim _obitosNovos As Integer
+        'Dim _obitosAcumulados As Integer
         Public Sub New(ByVal abreviacao As String)
             _nome = abreviacao
         End Sub
@@ -69,7 +127,7 @@ Public Class Mapa
             Return LocalizaValor("obitosAcumulados", _nome, data, dt)
         End Function
 
-        Private Function LocalizaValor(nomeColuna As String, estado As String, data As String, dt As systemData.DataTable)
+        Public Function LocalizaValor(nomeColuna As String, estado As String, data As String, dt As systemData.DataTable)
 
             ' filtro coluna "data" = a data informada
             Dim filtro As String = "data" & "=" & data
@@ -80,6 +138,7 @@ Public Class Mapa
             'index da coluna procurada
             Dim indexColunaProcurada As Integer = dt.Columns(nomeColuna).Ordinal
             'percorre todoas as linhas encontradas
+
             For Each linha As systemData.DataRow In drc
                 'pegar apenas o estado selecionado
                 If linha.Item(1).ToString = estado Then
@@ -87,6 +146,7 @@ Public Class Mapa
                 End If
             Next
 
+            Return Nothing
         End Function
         Property Nome As String
             Get
@@ -124,7 +184,7 @@ Public Class Mapa
         End Using
 
     End Function
-    Private Sub CriarGrafico(dt As systemData.DataTable, estado As String, colunaX As systemData.DataColumn, colunaY As systemData.DataColumn)
+    Private Sub CriarGrafico(dt As systemData.DataTable, estadosCol As Collection, colunaDado As String, frequenciaDias As Integer, tipoDistorcao As String)
 
         Dim doc As Document = acApp.DocumentManager.MdiActiveDocument
         Dim db As Database = doc.Database
@@ -137,17 +197,30 @@ Public Class Mapa
             Dim model As BlockTableRecord = bt(BlockTableRecord.ModelSpace).GetObject(OpenMode.ForWrite)
 
             'cria e adiciona a polilinha
-            Dim linha As New Polyline With {.Layer = estado}
-            model.AppendEntity(linha)
-            tr.AddNewlyCreatedDBObject(linha, True)
+            For Each estado As Estado In estadosCol
 
-            'adiciona novo ponto
-            For Each dtLinha As DataRow In dt.Rows
+                'criar coleção de linhas para depois ir adicionando pontos 
 
-                linha.AddVertexAt(linha.NumberOfVertices, New Point2d(dtLinha.ItemArray(0), dtLinha.ItemArray(1)), 0, 0, 0)
-                PausaAtualiza(500)
             Next
-            tr.Commit()
+
+            'Dim linha As New Polyline With {.Layer = Estado.Nome}
+            '    model.AppendEntity(linha)
+            '    tr.AddNewlyCreatedDBObject(linha, True)
+
+            '    Dim diaInicial As Integer = dt.Compute("Min(data)", "") '43860
+            '    Dim diaFinal As Integer = dt.Compute("Max(data)", "") '43927
+            '    Dim distorcaoX As Double = 2
+
+            '    linha.AddVertexAt(linha.NumberOfVertices, New Point2d(0, 0), 0, 0, 0)
+
+            '    'adiciona novo ponto
+            '    For i = diaInicial To diaFinal Step frequenciaDias
+            '        linha.AddVertexAt(linha.NumberOfVertices, New Point2d((i - diaInicial) * distorcaoX, Estado.LocalizaValor(colunaDado, Estado.Nome, i, dt) / 50), 0, 0, 0)
+
+            '    Next
+            '    linha.AddVertexAt(linha.NumberOfVertices, New Point2d((diaFinal - diaInicial) * distorcaoX, Estado.LocalizaValor(colunaDado, Estado.Nome, diaFinal, dt) / 50), 0, 0, 0)
+
+            '    tr.Commit()
         End Using
 
     End Sub
@@ -164,9 +237,6 @@ Public Class Mapa
         ed.UpdateScreen()
         System.Threading.Thread.Sleep(tempo)
     End Sub
-    ''' <summary>
-    ''' Função que converte um arquivo de texto com delimitador, a primeira linha deve conter o título das colunas.
-    ''' </summary>
     Public Function LerCSV(ByVal strFilePath As String, delimitador As String) As System.Data.DataTable
 
         'abre o arquivo
@@ -187,12 +257,22 @@ Public Class Mapa
             Dim dr As DataRow = dt.NewRow()
 
             For i As Integer = 0 To headers.Length - 1
+                'algumas publicações do arquivo csv estao com data no formato dd/MM/aaaa e outras no formato dd-MM-aaaa, devera ser convertido para inteiro
+
+                If rows(2).Contains("/") Then
+                    Dim convertData As Date = rows(2)
+                    rows(2) = convertData.ToOADate
+                ElseIf rows(2).Contains("-") Then
+                    rows(2).Replace("-", "/")
+                    Dim convertData As Date = rows(2)
+                    rows(2) = convertData.ToOADate
+
+                End If
                 dr(i) = rows(i)
             Next
 
             dt.Rows.Add(dr)
         End While
-
         Return dt
 
     End Function
